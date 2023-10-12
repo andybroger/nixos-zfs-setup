@@ -28,8 +28,8 @@
 
 set -ex
 
-DISK=(/dev/vda)
-#DISK=(/dev/vda /dev/vdb)
+DISK=(/dev/sda)
+#DISK=(/dev/sda /dev/sdb)
 
 # How to name the partitions. This will be visible in 'gdisk -l /dev/disk' and
 # in /dev/disk/by-partlabel.
@@ -66,7 +66,7 @@ ZFS_ROOT_VOL="nixos"
 ROOTPW=''
 
 # Do you want impermanence? In that case set this to 1. Not yes, not hai, 1.
-IMPERMANENCE=0
+IMPERMANENCE=1
 
 # If IMPERMANENCE is 1, this will be the name of the empty snapshots
 EMPTYSNAP="SYSINIT"
@@ -155,9 +155,6 @@ zfs create -o mountpoint=/     ${ZFS_ROOT}/${ZFS_ROOT_VOL}
 zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/home
 (( $IMPERMANENCE )) && zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/persist || true
 zfs create -o atime=off ${ZFS_ROOT}/${ZFS_ROOT_VOL}/nix
-zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/root
-zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/usr
-zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/var
 
 # Create datasets (subvolumes) in the boot dataset
 # This comes last because boot order matters
