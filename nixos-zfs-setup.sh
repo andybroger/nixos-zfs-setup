@@ -39,6 +39,8 @@ PART_BOOT="bpool"
 PART_SWAP="swap"
 PART_ROOT="rpool"
 
+# Do you want swap? If so, set this to 1. Not yes, not hai, 1.
+SWAP=0
 # How much swap per disk?
 SWAPSIZE=2G
 
@@ -98,14 +100,14 @@ do
 	sgdisk -a1 -n1:0:+100K -t1:EF02 -c 1:${PART_MBR}${i} ${d}
 	sgdisk -n2:1M:+1G -t2:EF00 -c 2:${PART_EFI}${i} ${d}
 	sgdisk -n3:0:+4G -t3:BE00 -c 3:${PART_BOOT}${i} ${d}
-	sgdisk -n4:0:+${SWAPSIZE} -t4:8200 -c 4:${PART_SWAP}${i} ${d}
-	SWAPDEVS+=(${d}4)
+	(( $SWAP )) && sgdisk -n4:0:+${SWAPSIZE} -t4:8200 -c 4:${PART_SWAP}${i} ${d} || true
+	(( $SWAP )) && SWAPDEVS+=(${d}4) || true
 	sgdisk -n5:0:0 -t5:BF00 -c 5:${PART_ROOT}${i} ${d}
 
 	partprobe ${d}
 	sleep 2
-	mkswap -L ${PART_SWAP}fs${i} /dev/disk/by-partlabel/${PART_SWAP}${i}
-	swapon /dev/disk/by-partlabel/${PART_SWAP}${i}
+	(( $SWAP )) && mkswap -L ${PART_SWAP}fs${i} /dev/disk/by-partlabel/${PART_SWAP}${i} || true
+	(( $SWAP )) && swapon /dev/disk/by-partlabel/${PART_SWAP}${i} || true
 	(( i++ )) || true
 done
 unset i d
@@ -151,7 +153,7 @@ zfs create -o mountpoint=/     ${ZFS_ROOT}/${ZFS_ROOT_VOL}
 
 # Create datasets (subvolumes) in the root dataset
 zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/home
-(( $IMPERMANENCE )) && zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/keep || true
+(( $IMPERMANENCE )) && zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/persist || true
 zfs create -o atime=off ${ZFS_ROOT}/${ZFS_ROOT_VOL}/nix
 zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/root
 zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/usr
@@ -278,8 +280,8 @@ sed -i "${ADDNR}i"' \      neededForBoot = true;' ${HWCFG}
 
 if (( $IMPERMANENCE ))
 then
-	# Of course we want to keep the config files after the initial
-	# reboot. So, create a bind mount from /keep/etc/nixos -> /etc/nixos
+	# Of course we want to persist the config files after the initial
+	# reboot. So, create a bind mount from /persist/etc/nixos -> /etc/nixos
 	# here, and copy the files and actually mount the bind later
 	ADDNR=$(awk '/^  swapDevices =/ {print NR-1}' ${HWCFG})
 	TMPFILE=$(mktemp)
@@ -287,7 +289,7 @@ then
 
 	tee -a ${TMPFILE} <<EOF
   fileSystems."/etc/nixos" =
-    { device = "/keep/etc/nixos";
+    { device = "/persist/etc/nixos";
       fsType = "none";
       options = [ "bind" ];
     };
@@ -310,9 +312,9 @@ EOF
 if (( $IMPERMANENCE ))
 then
 	# This is where we copy the config files and mount the bind
-	install -d -m 0755 /mnt/keep/etc
-	cp -a /mnt/etc/nixos /mnt/keep/etc/
-	mount -o bind /mnt/keep/etc/nixos /mnt/etc/nixos
+	install -d -m 0755 /mnt/persist/etc
+	cp -a /mnt/etc/nixos /mnt/persist/etc/
+	mount -o bind /mnt/persist/etc/nixos /mnt/etc/nixos
 fi
 
 set +x
@@ -324,4 +326,3 @@ echo "zpool export -a"
 echo "swapoff -a"
 echo "reboot"
 echo "Make note of these instructions because the nixos-install command will output a lot of text."
-
