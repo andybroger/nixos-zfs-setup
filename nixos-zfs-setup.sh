@@ -1,45 +1,10 @@
-# vim: ts=4 sw=4 ai noet si sta fdm=marker
-#
-# Edit the variables below. Then run this by issuing:
-# `bash ./nixos-zfs-setup.sh`
-#
-# WARNING: this script will clear partition tables of existing disks.
-# Make sure that you set the DISK variable correctly. Additionally, it
-# is a good idea to clean your disk(s) current partitions first. Use the
-# command `wipefs` for this.
-#
-###############################################################################
-#    nixos-zfs-setup.sh: a bash script that sets up zfs disks for NixOS.      #
-#      Copyright (C) 2022  Mark (voidzero) van Dijk, The Netherlands.         #
-#                                                                             #
-#    This program is free software: you can redistribute it and/or modify     #
-#    it under the terms of the GNU General Public License as published by     #
-#    the Free Software Foundation, either version 3 of the License, or        #
-#    (at your option) any later version.                                      #
-#                                                                             #
-#    This program is distributed in the hope that it will be useful,          #
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of           #
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            #
-#    GNU General Public License for more details.                             #
-#                                                                             #
-#    You should have received a copy of the GNU General Public License        #
-#    along with this program.  If not, see <https://www.gnu.org/licenses/>.   #
-###############################################################################
-
+#!/usr/bin/env bash
 set -ex
 
 DISK=(/dev/sda)
 #DISK=(/dev/sda /dev/sdb)
 
-# How to name the partitions. This will be visible in 'gdisk -l /dev/disk' and
-# in /dev/disk/by-partlabel.
-PART_MBR="bootcode"
-PART_EFI="efiboot"
-PART_BOOT="bpool"
-PART_SWAP="swap"
-PART_ROOT="rpool"
-
-# Do you want swap? If so, set this to 1. Not yes, not hai, 1.
+# Do you want swap?
 SWAP=0
 # How much swap per disk?
 SWAPSIZE=2G
@@ -52,26 +17,12 @@ SWAPSIZE=2G
 #ZFS_BOOT_VDEV="mirror"
 #ZFS_ROOT_VDEV="mirror"
 
-# How to name the boot pool and root pool.
-ZFS_BOOT="bpool"
-ZFS_ROOT="rpool"
-
-# How to name the root volume in which nixos will be installed.
-# If ZFS_ROOT is set to "rpool" and ZFS_ROOT_VOL is set to "nixos",
-# nixos will be installed in rpool/nixos, with a few extra subvolumes
-# (datasets).
-ZFS_ROOT_VOL="nixos"
-
 # Generate a root password with mkpasswd -m SHA-512
-ROOTPW=''
+# defaults to 'nixos'
+ROOTPW='$6$dJtyokYwIq0JXlg1$sYnhPL5SQW4.V4KXslVbFQkY2TfkQJq2/7Ov48CGgMgV/C8rmdVpPoV9FHsi5PGgo9aViGjyEmWGB9Wt58aUT0'
 
-# Do you want impermanence? In that case set this to 1. Not yes, not hai, 1.
+# Do you want impermanence?
 IMPERMANENCE=1
-
-# If IMPERMANENCE is 1, this will be the name of the empty snapshots
-EMPTYSNAP="SYSINIT"
-
-# End of settings.
 
 set +x
 
@@ -97,17 +48,17 @@ i=0 SWAPDEVS=()
 for d in ${DISK[*]}
 do
 	sgdisk --zap-all ${d}
-	sgdisk -a1 -n1:0:+100K -t1:EF02 -c 1:${PART_MBR}${i} ${d}
-	sgdisk -n2:1M:+1G -t2:EF00 -c 2:${PART_EFI}${i} ${d}
-	sgdisk -n3:0:+4G -t3:BE00 -c 3:${PART_BOOT}${i} ${d}
-	(( $SWAP )) && sgdisk -n4:0:+${SWAPSIZE} -t4:8200 -c 4:${PART_SWAP}${i} ${d} || true
+	sgdisk -a1 -n1:0:+100K -t1:EF02 -c 1:bootcode${i} ${d}
+	sgdisk -n2:1M:+1G -t2:EF00 -c 2:efiboot${i} ${d}
+	sgdisk -n3:0:+4G -t3:BE00 -c 3:bpool${i} ${d}
+	(( $SWAP )) && sgdisk -n4:0:+${SWAPSIZE} -t4:8200 -c 4:swap${i} ${d} || true
 	(( $SWAP )) && SWAPDEVS+=(${d}4) || true
-	sgdisk -n5:0:0 -t5:BF00 -c 5:${PART_ROOT}${i} ${d}
+	sgdisk -n5:0:0 -t5:BF00 -c 5:rpool${i} ${d}
 
 	partprobe ${d}
 	sleep 2
-	(( $SWAP )) && mkswap -L ${PART_SWAP}fs${i} /dev/disk/by-partlabel/${PART_SWAP}${i} || true
-	(( $SWAP )) && swapon /dev/disk/by-partlabel/${PART_SWAP}${i} || true
+	(( $SWAP )) && mkswap -L swapfs${i} /dev/disk/by-partlabel/swap${i} || true
+	(( $SWAP )) && swapon /dev/disk/by-partlabel/swap${i} || true
 	(( i++ )) || true
 done
 unset i d
@@ -129,7 +80,7 @@ zpool create \
 	-O mountpoint=none \
 	-O checksum=sha256 \
 	-R /mnt \
-	${ZFS_BOOT} ${ZFS_BOOT_VDEV} /dev/disk/by-partlabel/${PART_BOOT}*
+	bpool ${ZFS_BOOT_VDEV} /dev/disk/by-partlabel/bpool*
 
 # Create the root pool
 zpool create \
@@ -143,46 +94,43 @@ zpool create \
 	-O mountpoint=none \
 	-O checksum=edonr \
 	-R /mnt \
-	${ZFS_ROOT} ${ZFS_ROOT_VDEV} /dev/disk/by-partlabel/${PART_ROOT}*
+	rpool ${ZFS_ROOT_VDEV} /dev/disk/by-partlabel/rpool*
 
 # Create the boot dataset
-zfs create ${ZFS_BOOT}/${ZFS_ROOT_VOL}
+zfs create bpool
 
 # Create the root dataset
-zfs create -o mountpoint=/     ${ZFS_ROOT}/${ZFS_ROOT_VOL}
+zfs create -o mountpoint=/ rpool/root
 
 # Create datasets (subvolumes) in the root dataset
-zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/home
-(( $IMPERMANENCE )) && zfs create ${ZFS_ROOT}/${ZFS_ROOT_VOL}/persist || true
-zfs create -o atime=off ${ZFS_ROOT}/${ZFS_ROOT_VOL}/nix
+zfs create rpool/home
+(( $IMPERMANENCE )) && zfs create rpool/persist || true
+zfs create -o atime=off rpool/nix
 
 # Create datasets (subvolumes) in the boot dataset
 # This comes last because boot order matters
-zfs create -o mountpoint=/boot ${ZFS_BOOT}/${ZFS_ROOT_VOL}/boot
+zfs create -o mountpoint=/boot bpool/boot
 
 # Make empty snapshots of impermanent volumes
 if (( $IMPERMANENCE ))
 then
-	for i in "" /usr /var
-	do
-		zfs snapshot ${ZFS_ROOT}/${ZFS_ROOT_VOL}${i}@${EMPTYSNAP}
-	done
+	zfs snapshot rpool/root@blank
 fi
 
 # Create, mount and populate the efi partitions
 i=0
 for d in ${DISK[*]}
 do
-	mkfs.vfat -n EFI /dev/disk/by-partlabel/${PART_EFI}${i}
-	mkdir -p /mnt/boot/efis/${PART_EFI}${i}
-	mount -t vfat /dev/disk/by-partlabel/${PART_EFI}${i} /mnt/boot/efis/${PART_EFI}${i}
+	mkfs.vfat -n EFI /dev/disk/by-partlabel/efiboot${i}
+	mkdir -p /mnt/boot/efis/efiboot${i}
+	mount -t vfat /dev/disk/by-partlabel/efiboot${i} /mnt/boot/efis/efiboot${i}
 	(( i++ )) || true
 done
 unset i d
 
 # Mount the first drive's efi partition to /mnt/boot/efi
 mkdir /mnt/boot/efi
-mount -t vfat /dev/disk/by-partlabel/${PART_EFI}0 /mnt/boot/efi
+mount -t vfat /dev/disk/by-partlabel/efiboot0 /mnt/boot/efi
 
 # Make sure we won't trip over zpool.cache later
 mkdir -p /mnt/etc/zfs/
@@ -216,7 +164,7 @@ if (( $IMPERMANENCE ))
 then
 	tee -a ${ZFSCFG} <<EOF
   boot.initrd.postDeviceCommands = lib.mkAfter ''
-    zfs rollback -r ${ZFS_ROOT}/${ZFS_ROOT_VOL}@${EMPTYSNAP}
+    zfs rollback -r rpool/root@blank
   '';
 EOF
 fi
